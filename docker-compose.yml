@@ -1,33 +1,29 @@
 version: '3.8'
+
 services:
   php:
     build: .
-    container_name: lab5_php
+    container_name: lab9_php
     volumes:
-      - ./www:/var/www/html
-    expose:
-      - "9000"
+      - ./code/:/var/www/html
+      - ./tests/:/var/www/html/tests
+    environment:
+      - DB_HOST=${DB_HOST:-db}
+      - DB_NAME=${DB_NAME:-test_db}
+      - DB_USER=${DB_USER:-test_user}
+      - DB_PASSWORD=${DB_PASSWORD:-test_pass}
     depends_on:
       - db
+    env_file:
+      - .env.test
 
   db:
     image: mysql:8.0
-    container_name: lab5_db
+    container_name: lab9_db
     environment:
       MYSQL_ROOT_PASSWORD: rootpass
-      MYSQL_DATABASE: lab5_db
-      MYSQL_USER: lab5_user
-      MYSQL_PASSWORD: lab5_pass
+      MYSQL_DATABASE: ${DB_NAME:-test_db}
+      MYSQL_USER: ${DB_USER:-test_user}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-test_pass}
     ports:
       - "3307:3306"
-    volumes:
-      - db_data:/var/lib/mysql
-
-  adminer:
-    image: adminer
-    container_name: lab5_adminer
-    restart: always
-    ports:
-      - "8081:8080"
-    depends_on:
-      - db

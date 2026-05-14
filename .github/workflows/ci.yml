@@ -10,10 +10,16 @@ on:
       - main
       - master
 
-jobs:
-  build-and-test:
-    runs-on: ubuntu-latest
+env:
+  DB_HOST: db
+  DB_NAME: test_db
+  DB_USER: test_user
+  DB_PASSWORD: test_pass
 
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
     steps:
       - name: Clone repository
         uses: actions/checkout@v3
@@ -21,7 +27,7 @@ jobs:
       - name: Show directory structure
         run: ls -la
 
-      - name: Create directories
+      - name: Create necessary directories
         run: |
           mkdir -p code
           mkdir -p tests
@@ -30,16 +36,25 @@ jobs:
       - name: Copy code files
         run: |
           if [ -d "www" ]; then cp -r www/* code/; fi
-          if [ -d "code" ] && [ -z "$(ls -A code)" ]; then echo "No code files found"; fi
+          if [ -f ".env.test" ]; then cp .env.test code/.env; fi
 
-      - name: Start Docker containers
+      - name: Create Docker networks
+        run: docker network create lab9_network || true
+
+      - name: Build and start Docker containers
         run: docker compose up -d --build
 
-      - name: Check containers status
+      - name: Check containers status (штрафное задание 3)
         run: docker ps
 
-      - name: Wait for services to be ready
+      - name: Wait for services to be ready (штрафное задание 2)
         run: sleep 15
+
+      - name: Check PHP container is running
+        run: docker compose exec -T php php -v
+
+      - name: Check DB connection
+        run: docker compose exec -T php php -r "try { new PDO('mysql:host=db;dbname=test_db', 'test_user', 'test_pass'); echo 'DB OK\n'; } catch(Exception \$e) { echo 'DB ERROR: ' . \$e->getMessage(); exit(1); }"
 
       - name: List files in container
         run: docker compose exec -T php ls -la /var/www/html
@@ -48,12 +63,116 @@ jobs:
         run: docker compose exec -T php composer install
 
       - name: Run PHPUnit tests
-        run: docker compose exec -T php vendor/bin/phpunit tests --stop-on-failure
+        run: docker compose exec -T php vendor/bin/phpunit tests --stop-on-failure --testdox
+
+      - name: Show logs on failure (штрафное задание 1)
+        if: failure()
+        run: docker compose logs
+
+      - name: Save container state for next job (штрафное задание 5)
+        run: |
+          docker commit lab9_php lab9_php_built:latest
+          docker save lab9_php_built:latest -o php_built.tar
+
+      - name: Upload built container artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: php-built-container
+          path: php_built.tar
+
+      - name: Stop containers
+        if: always()
+        run: docker compose down
+
+  test:
+    runs-on: ubuntu-latest
+    needs: build
+    if: always()
+    
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v3
+
+      - name: Download built container
+        uses: actions/download-artifact@v3
+        with:
+          name: php-built-container
+          path: ./
+
+      - name: Load built container
+        run: |
+          docker load -i php_built.tar
+          docker tag lab9_php_built:latest lab9_php:latest
+
+      - name: Start containers with built image
+        run: docker compose up -d
+
+      - name: Wait for services
+        run: sleep 15
+
+      - name: Check containers (штрафное задание 3)
+        run: docker ps
+
+      - name: Run specific tests group
+        run: docker compose exec -T php vendor/bin/phpunit tests --group=fast
+
+      - name: Show logs on failure (штрафное задание 1)
+        if: failure()
+        run: docker compose logs
+
+      - name: Stop containers
+        if: always()
+        run: docker compose down
+
+  lint:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v3
+
+      - name: Start containers
+        run: docker compose up -d -build
+
+      - name: Wait for services
+        run: sleep 10
+
+      - name: Check PHP syntax
+        run: docker compose exec -T php find /var/www/html -name "*.php" -exec php -l {} \;
 
       - name: Show logs on failure
         if: failure()
         run: docker compose logs
 
-      - name: Stop and remove containers
+      - name: Stop containers
         if: always()
         run: docker compose down
+
+  report:
+    runs-on: ubuntu-latest
+    needs: [build, test, lint]
+    if: always()
+    
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v3
+
+      - name: Create test report
+        run: |
+          echo "# CI/CD Pipeline Report" > report.md
+          echo "" >> report.md
+          echo "## Summary" >> report.md
+          echo "- Build: ${{ needs.build.result }}" >> report.md
+          echo "- Test: ${{ needs.test.result }}" >> report.md
+          echo "- Lint: ${{ needs.lint.result }}" >> report.md
+          echo "" >> report.md
+          echo "## Details" >> report.md
+          echo "Run: ${{ github.run_id }}" >> report.md
+          echo "Branch: ${{ github.ref_name }}" >> report.md
+          echo "Commit: ${{ github.sha }}" >> report.md
+
+      - name: Upload report
+        uses: actions/upload-artifact@v3
+        with:
+          name: ci-report
+          path: report.md
