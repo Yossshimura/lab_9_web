@@ -1,0 +1,59 @@
+name: PHP Docker CI/CD
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v3
+
+      - name: Show directory structure
+        run: ls -la
+
+      - name: Create directories
+        run: |
+          mkdir -p code
+          mkdir -p tests
+          mkdir -p .github/workflows
+
+      - name: Copy code files
+        run: |
+          if [ -d "www" ]; then cp -r www/* code/; fi
+          if [ -d "code" ] && [ -z "$(ls -A code)" ]; then echo "No code files found"; fi
+
+      - name: Start Docker containers
+        run: docker compose up -d --build
+
+      - name: Check containers status
+        run: docker ps
+
+      - name: Wait for services to be ready
+        run: sleep 15
+
+      - name: List files in container
+        run: docker compose exec -T php ls -la /var/www/html
+
+      - name: Install Composer dependencies
+        run: docker compose exec -T php composer install
+
+      - name: Run PHPUnit tests
+        run: docker compose exec -T php vendor/bin/phpunit tests --stop-on-failure
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Stop and remove containers
+        if: always()
+        run: docker compose down
